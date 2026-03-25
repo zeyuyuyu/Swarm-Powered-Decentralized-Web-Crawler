@@ -1,41 +1,55 @@
 import os
-import requests
-from bs4 import BeautifulSoup
+import time
+import random
+import logging
 from typing import List
 from dataclasses import dataclass
 
+from swarm_utils import (
+    SwarmNode,
+    SwarmMessage,
+    SwarmMessageType,
+    SwarmTaskManager
+)
+
 @dataclass
-class WebPage:
+class CrawlTask:
     url: str
-    content: str
-    links: List[str]
+    depth: int
 
-class SwarmCrawler:
-    def __init__(self, seed_urls: List[str], num_workers: int):
-        self.seed_urls = seed_urls
-        self.num_workers = num_workers
-        self.pages = []
-        self.frontier = seed_urls
-        self.visited = set()
+class DistributedCrawler:
+    def __init__(self, swarm_nodes: List[SwarmNode]):
+        self.swarm_nodes = swarm_nodes
+        self.task_manager = SwarmTaskManager(swarm_nodes)
+        self.logger = logging.getLogger(__name__)
 
-    def crawl(self):
-        while self.frontier:
-            worker_tasks = [self.frontier.pop() for _ in range(min(self.num_workers, len(self.frontier)))]
-            results = [self.crawl_page(url) for url in worker_tasks]
-            self.pages.extend(results)
-            self.visited.update(worker_tasks)
-            self.frontier.extend([link for page in results for link in page.links if link not in self.visited])
+    def crawl(self, start_urls: List[str], max_depth: int):
+        tasks = [CrawlTask(url, 0) for url in start_urls]
+        self.task_manager.submit_tasks(tasks)
 
-    def crawl_page(self, url: str) -> WebPage:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        links = [link.get('href') for link in soup.find_all('a')]
-        return WebPage(url, response.text, links)
+        while True:
+            task = self.task_manager.get_next_task()
+            if not task:
+                break
+
+            self.logger.info(f'Crawling: {task.url} (depth {task.depth})')
+            time.sleep(random.uniform(0.1, 1.0))  # Simulating crawling
+
+            if task.depth < max_depth:
+                new_tasks = [CrawlTask(f'{task.url}/page{i}', task.depth + 1) for i in range(3)]
+                self.task_manager.submit_tasks(new_tasks)
+
+        self.logger.info('Crawling complete.')
 
 if __name__ == '__main__':
-    seed_urls = ['https://www.example.com', 'https://www.wikipedia.org']
-    crawler = SwarmCrawler(seed_urls, num_workers=10)
-    crawler.crawl()
-    for page in crawler.pages:
-        print(f'URL: {page.url}')
-        print(f'Links: {page.links}')
+    logging.basicConfig(level=logging.INFO)
+
+    # Example usage
+    swarm_nodes = [
+        SwarmNode('node1', ['192.168.1.100', '192.168.1.101']),
+        SwarmNode('node2', ['192.168.1.102', '192.168.1.103']),
+        SwarmNode('node3', ['192.168.1.104', '192.168.1.105'])
+    ]
+
+    crawler = DistributedCrawler(swarm_nodes)
+    crawler.crawl(['https://example.com', 'https://another-example.com'], max_depth=2)
